@@ -376,28 +376,94 @@ def write_report(out_dir, sitemaps, url_records, screenshots):
     with open(os.path.join(out_dir, "urls.json"), "w") as f:
         json.dump(url_records, f, indent=2)
 
-    rows = []
-    for r in url_records:
-        shot = screenshots.get(r["url"])
-        img_tag = f'<a href="screenshots/{shot}" target="_blank"><img src="screenshots/{shot}" width="220"></a>' if shot else "no screenshot"
-        rows.append(
-            f"<tr><td><a href='{r['url']}' target='_blank'>{r['url']}</a></td>"
-            f"<td>{r['source_sitemap']}</td><td>{img_tag}</td></tr>"
-        )
+    # IMPORTANT: the HTML report only lists pages that were actually
+    # screenshotted, not every URL found. Sites can have millions of URLs;
+    # dumping all of them into one HTML table forces the browser to build a
+    # multi-hundred-MB DOM and makes the report unusable. The full URL list
+    # always lives in urls.txt / urls.json regardless of what's below.
+    shot_records = [r for r in url_records if r["url"] in screenshots]
+
+    # Build a small JSON payload for the report's own data (URL, source
+    # sitemap, screenshot filename) and paginate it with plain JS so even a
+    # few thousand screenshots stay smooth — only one page's worth of rows
+    # is ever in the DOM at a time.
+    report_rows = [
+        {"url": r["url"], "source": r["source_sitemap"], "shot": screenshots[r["url"]]}
+        for r in shot_records
+    ]
+    rows_json = json.dumps(report_rows)
+
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <title>Sitemap Recon Report</title>
 <style>
 body{{font-family:sans-serif;background:#111;color:#eee;padding:20px}}
 table{{border-collapse:collapse;width:100%}}
-td,th{{border:1px solid #333;padding:8px;font-size:13px;vertical-align:top}}
-th{{background:#222}}
+td,th{{border:1px solid #333;padding:8px;font-size:13px;vertical-align:top;word-break:break-all}}
+th{{background:#222;text-align:left}}
 a{{color:#6cf}}
+img{{max-width:220px;border:1px solid #333}}
+.meta{{color:#999;margin-bottom:16px}}
+.controls{{display:flex;gap:10px;align-items:center;margin-bottom:12px}}
+input[type=text]{{background:#222;color:#eee;border:1px solid #444;padding:6px 10px;flex:1}}
+button{{background:#222;color:#eee;border:1px solid #444;padding:6px 12px;cursor:pointer}}
+button:hover{{background:#333}}
+button:disabled{{opacity:0.4;cursor:default}}
+#pageinfo{{color:#999}}
 </style></head><body>
 <h2>Sitemap Recon Report</h2>
-<p>{len(sitemaps)} sitemap(s) crawled, {len(url_records)} page URL(s) found, {len(screenshots)} screenshot(s) captured.</p>
-<table><tr><th>Page URL</th><th>Source sitemap</th><th>Screenshot</th></tr>
-{''.join(rows)}
-</table></body></html>"""
+<p class="meta">
+  {len(sitemaps)} sitemap(s) crawled &middot;
+  {len(url_records)} total page URL(s) found &middot;
+  {len(shot_records)} screenshot(s) shown below
+  {"(the full URL list is in urls.txt / urls.json — too large to render here)" if len(url_records) > len(shot_records) else ""}
+</p>
+<div class="controls">
+  <input type="text" id="search" placeholder="Filter by URL...">
+  <button id="prev">&larr; Prev</button>
+  <span id="pageinfo"></span>
+  <button id="next">Next &rarr;</button>
+</div>
+<table>
+  <thead><tr><th>Page URL</th><th>Source sitemap</th><th>Screenshot</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+const DATA = {rows_json};
+const PAGE_SIZE = 50;
+let filtered = DATA;
+let page = 0;
+
+function render() {{
+  const start = page * PAGE_SIZE;
+  const slice = filtered.slice(start, start + PAGE_SIZE);
+  document.getElementById('rows').innerHTML = slice.map(r => `
+    <tr>
+      <td><a href="${{r.url}}" target="_blank">${{r.url}}</a></td>
+      <td>${{r.source}}</td>
+      <td><a href="screenshots/${{r.shot}}" target="_blank"><img src="screenshots/${{r.shot}}" loading="lazy"></a></td>
+    </tr>`).join('');
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  document.getElementById('pageinfo').textContent =
+    filtered.length ? `Page ${{page + 1}} of ${{totalPages}} (${{filtered.length}} results)` : 'No results';
+  document.getElementById('prev').disabled = page === 0;
+  document.getElementById('next').disabled = page >= totalPages - 1;
+}}
+
+document.getElementById('search').addEventListener('input', (e) => {{
+  const q = e.target.value.toLowerCase();
+  filtered = q ? DATA.filter(r => r.url.toLowerCase().includes(q)) : DATA;
+  page = 0;
+  render();
+}});
+document.getElementById('prev').addEventListener('click', () => {{ if (page > 0) {{ page--; render(); }} }});
+document.getElementById('next').addEventListener('click', () => {{
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (page < totalPages - 1) {{ page++; render(); }}
+}});
+
+render();
+</script>
+</body></html>"""
     with open(os.path.join(out_dir, "report.html"), "w") as f:
         f.write(html)
 
