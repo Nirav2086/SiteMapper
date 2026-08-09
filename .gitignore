@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.sitemap-venv/
+
+# Tool output (generated per-run, don't commit scan results)
+sitemap_recon_*/
+*.png
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/
+*.swp
